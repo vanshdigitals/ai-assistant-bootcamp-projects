@@ -1,7 +1,7 @@
 import streamlit as st
 from datetime import datetime
 from utils.ai_engine import (
-    chat_with_saarthi, extract_intent, extract_name, extract_role
+    chat_with_saarthi, extract_intent, extract_name, extract_role, get_model
 )
 from utils.memory_manager import (
     load_user_data, save_user_data, update_session,
@@ -206,7 +206,7 @@ with st.sidebar:
 
     st.divider()
     st.caption("Built with Ollama + Streamlit")
-    st.caption(f"Model: qwen2.5:7b | Local AI")
+    st.caption(f"Model: {get_model()} | Local AI")
 
 
 # =============================================

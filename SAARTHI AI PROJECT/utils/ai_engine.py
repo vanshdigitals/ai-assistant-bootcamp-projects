@@ -3,9 +3,34 @@ import os
 import json
 import re
 
-MODEL_NAME = "qwen2.5:7b"
+MODEL_CHAIN = ["qwen2.5:7b", "qwen2.5:3b", "mistral", "phi3"]
 MAX_HISTORY_MESSAGES = 10
 MAX_TOKENS = 1024
+
+def get_available_model():
+    try:
+        response = ollama.list()
+        models = response.get('models', []) if isinstance(response, dict) else []
+        installed_names = []
+        for m in models:
+            name = m.get('name', '') if isinstance(m, dict) else getattr(m, 'model', str(m))
+            installed_names.append(str(name))
+    except Exception:
+        installed_names = []
+
+    for preferred in MODEL_CHAIN:
+        for installed in installed_names:
+            if preferred in installed:
+                return preferred
+    return MODEL_CHAIN[0]
+
+_active_model = None
+
+def get_model():
+    global _active_model
+    if _active_model is None:
+        _active_model = get_available_model()
+    return _active_model
 
 def get_system_prompt():
     prompt_path = os.path.join(os.path.dirname(__file__), '..', 'prompts', 'system_prompt.txt')
@@ -77,25 +102,41 @@ def chat_with_saarthi(user_message, chat_history=None, user_data=None):
 
     messages.append({'role': 'user', 'content': user_message})
 
-    try:
-        response = ollama.chat(
-            model=MODEL_NAME,
-            messages=messages,
-            options={
-                'num_predict': MAX_TOKENS,
-                'temperature': 0.7,
-                'top_p': 0.9,
-                'repeat_penalty': 1.1,
-            }
-        )
-        return response['message']['content']
-    except ConnectionError:
-        return "Could not connect to Ollama. Make sure Ollama is running (`ollama serve` in terminal)."
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "model" in error_msg and "not found" in error_msg:
-            return f"Model '{MODEL_NAME}' not found. Run `ollama pull {MODEL_NAME}` in your terminal."
-        return f"Something went wrong: {str(e)}"
+    model = get_model()
+    models_to_try = [model] + [m for m in MODEL_CHAIN if m != model]
+
+    last_error = None
+    for try_model in models_to_try:
+        try:
+            response = ollama.chat(
+                model=try_model,
+                messages=messages,
+                options={
+                    'num_predict': MAX_TOKENS,
+                    'temperature': 0.7,
+                    'top_p': 0.9,
+                    'repeat_penalty': 1.1,
+                }
+            )
+            global _active_model
+            _active_model = try_model
+            return response['message']['content']
+        except ConnectionError:
+            return "Could not connect to Ollama. Make sure Ollama is running (`ollama serve` in terminal)."
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_gpu_error = any(term in error_msg for term in ['cuda', 'gpu', 'vram', 'memory', 'buffer', 'stack'])
+            is_model_missing = "not found" in error_msg
+            last_error = str(e)
+            if is_gpu_error or is_model_missing:
+                continue
+            return f"Something went wrong: {str(e)}"
+
+    return (
+        f"All models failed. Last error: {last_error}\n\n"
+        "Try running `ollama pull qwen2.5:3b` in your terminal for a lighter model, "
+        "or close GPU-heavy apps (games, video editors) to free VRAM."
+    )
 
 def extract_intent(user_message):
     lower = user_message.lower().strip()
